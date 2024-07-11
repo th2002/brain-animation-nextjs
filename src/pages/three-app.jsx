@@ -15,24 +15,15 @@ import {
 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { InstancedUniformsMesh } from "three-instanced-uniforms-mesh";
+import Stats from "stats.js";
 import { gsap } from "gsap";
 
-// Import shaders
 import vertexShader from "../shaders/brain.vertex.glsl";
 import fragmentShader from "../shaders/brain.fragment.glsl";
 
 const ThreeApp = ({ width, height }) => {
   const containerRef = useRef(null);
-  const rendererRef = useRef(null);
-  const cameraRef = useRef(null);
-  const sceneRef = useRef(null);
-  const brainRef = useRef(null); // Ref to hold brain object
-  const instancedMeshRef = useRef(null);
-  const raycasterRef = useRef(null);
-  const mouseRef = useRef(new Vector2());
-  const intersectsRef = useRef([]);
-  const hoverRef = useRef(false);
-  const uniformsRef = useRef({ uHover: 0 });
+  const statsRef = useRef(null);
 
   const colors = [
     new Color(0x963cbd),
@@ -41,35 +32,63 @@ const ThreeApp = ({ width, height }) => {
     new Color(0xfeae51),
   ];
 
+  const uniformsRef = useRef({
+    uHover: 0,
+  });
+
+  const isMobileRef = useRef(false);
+
+  const cameraRef = useRef(null);
+  const sceneRef = useRef(null);
+  const rendererRef = useRef(null);
+  const raycasterRef = useRef(null);
+  const mouseRef = useRef(new Vector2());
+  const intersectsRef = useRef([]);
+  const hoverRef = useRef(false);
+  const pointRef = useRef(new Vector3());
+  const instancedMeshRef = useRef(null);
   const loadingManagerRef = useRef(null);
   const gltfLoaderRef = useRef(null);
-  const isMobileRef = useRef(false);
+  const brainRef = useRef(null);
 
   const _resizeCb = () => _onResize();
   const _mousemoveCb = (e) => _onMousemove(e);
 
   useEffect(() => {
     if (containerRef.current) {
-      _createScene();
-      _createCamera();
-      _createRenderer();
-      _createRaycaster();
-      _createLoader();
-      _checkMobile();
-      _loadModel().then(() => {
-        _addListeners();
-        rendererRef.current.setAnimationLoop(() => {
-          _update();
-          _render();
-        });
-      });
-
-      return () => {
-        rendererRef.current.dispose();
-        _removeListeners();
-      };
+      _initThreeApp();
     }
+
+    return () => {
+      if (rendererRef.current) {
+        rendererRef.current.dispose();
+      }
+      _removeListeners();
+    };
   }, []);
+
+  const _initThreeApp = () => {
+    statsRef.current = new Stats();
+    // document.body.appendChild(statsRef.current.dom);
+
+    _createScene();
+    _createCamera();
+    _createRenderer();
+    _createRaycaster();
+    _createLoader();
+    _checkMobile();
+
+    _loadModel().then(() => {
+      _addListeners();
+
+      rendererRef.current.setAnimationLoop(() => {
+        statsRef.current.begin();
+        _update();
+        _render();
+        statsRef.current.end();
+      });
+    });
+  };
 
   const _update = () => {
     cameraRef.current.lookAt(0, 0, 0);
@@ -94,7 +113,9 @@ const ThreeApp = ({ width, height }) => {
       alpha: true,
       antialias: window.devicePixelRatio === 1,
     });
+
     containerRef.current.appendChild(rendererRef.current.domElement);
+
     rendererRef.current.setSize(width, height);
     rendererRef.current.setPixelRatio(Math.min(1.5, window.devicePixelRatio));
     rendererRef.current.physicallyCorrectLights = true;
@@ -102,8 +123,11 @@ const ThreeApp = ({ width, height }) => {
 
   const _createLoader = () => {
     loadingManagerRef.current = new LoadingManager();
-    loadingManagerRef.current.onLoad = () =>
+
+    loadingManagerRef.current.onLoad = () => {
       document.documentElement.classList.add("model-loaded");
+    };
+
     gltfLoaderRef.current = new GLTFLoader(loadingManagerRef.current);
   };
 
@@ -111,10 +135,11 @@ const ThreeApp = ({ width, height }) => {
     return new Promise((resolve) => {
       gltfLoaderRef.current.load("../../static/brain.glb", (gltf) => {
         brainRef.current = gltf.scene.children[0];
+
         const geometry = new BoxGeometry(0.004, 0.004, 0.004, 1, 1, 1);
         const material = new ShaderMaterial({
-          vertexShader,
-          fragmentShader,
+          vertexShader: vertexShader,
+          fragmentShader: fragmentShader,
           wireframe: true,
           uniforms: {
             uPointer: { value: new Vector3() },
@@ -134,21 +159,29 @@ const ThreeApp = ({ width, height }) => {
 
         const dummy = new Object3D();
         const positions = brainRef.current.geometry.attributes.position.array;
-
         for (let i = 0; i < positions.length; i += 3) {
-          dummy.position.set(positions[i], positions[i + 1], positions[i + 2]);
+          dummy.position.set(
+            positions[i + 0],
+            positions[i + 1],
+            positions[i + 2]
+          );
+
           dummy.updateMatrix();
+
           instancedMeshRef.current.setMatrixAt(i / 3, dummy.matrix);
+
           instancedMeshRef.current.setUniformAt(
             "uRotation",
             i / 3,
             MathUtils.randFloat(-1, 1)
           );
+
           instancedMeshRef.current.setUniformAt(
             "uSize",
             i / 3,
             MathUtils.randFloat(0.3, 3)
           );
+
           const colorIndex = MathUtils.randInt(0, colors.length - 1);
           instancedMeshRef.current.setUniformAt(
             "uColor",
@@ -177,8 +210,10 @@ const ThreeApp = ({ width, height }) => {
   };
 
   const _onMousemove = (e) => {
-    const x = (e.clientX / containerRef.current.offsetWidth) * 2 - 1;
-    const y = -(e.clientY / containerRef.current.offsetHeight) * 2 - 1;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / width) * 2 - 1;
+    const y = -((e.clientY - rect.top) / height) * 2 + 1;
+
     mouseRef.current.set(x, y);
 
     gsap.to(cameraRef.current.position, {
@@ -188,25 +223,28 @@ const ThreeApp = ({ width, height }) => {
     });
 
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+
     intersectsRef.current = raycasterRef.current.intersectObject(
       brainRef.current
-    ); // Ensure brainRef.current is defined
+    );
 
     if (intersectsRef.current.length === 0) {
+      // Mouseleave
       if (hoverRef.current) {
         hoverRef.current = false;
         _animateHoverUniform(0);
       }
     } else {
+      // Mouseenter
       if (!hoverRef.current) {
         hoverRef.current = true;
         _animateHoverUniform(1);
       }
 
       gsap.to(pointRef.current, {
-        x: () => intersectsRef.current[0]?.point.x || 0,
-        y: () => intersectsRef.current[0]?.point.y || 0,
-        z: () => intersectsRef.current[0]?.point.z || 0,
+        x: intersectsRef.current[0]?.point.x || 0,
+        y: intersectsRef.current[0]?.point.y || 0,
+        z: intersectsRef.current[0]?.point.z || 0,
         overwrite: true,
         duration: 0.3,
         onUpdate: () => {

@@ -1,8 +1,8 @@
 import ThreeApp from "./three-app";
 
 const App = () => {
-  const width = 800;
-  const height = 300;
+  const width = 1000;
+  const height = 500;
   return (
     <div
       style={{
